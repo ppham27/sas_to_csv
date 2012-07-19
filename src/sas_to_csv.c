@@ -154,7 +154,7 @@ typedef struct {
 
 typedef struct {  
   subh_ptr **ptrs;
-  int total;
+  int count;
   int *type_counts;
 } subh_array;
 
@@ -423,12 +423,18 @@ meta_info * get_meta_info(FILE *data_file, page_info *page_info_ptr) {
                                       get_subh(subhs, COLNAME),subhs->type_counts[COLNAME],
                                       get_subh(subhs, COLLABS),subhs->type_counts[COLLABS]);
 
+  /* free subhs */
+  for (i = 0; i < subhs->count; i++) free(subhs->ptrs[i]->info);
+  free(subhs->ptrs);
+  free(subhs->type_counts);
+  free(subhs);
+
   return meta_info_ptr;
 }
 
 subh_array * initialize_subh_array() {
   subh_array *subhs = (subh_array *) malloc(sizeof(subh_array));
-  subhs->total = 0;
+  subhs->count = 0;
   subhs->type_counts = (int *) calloc(SUBH_TYPES_NUM, sizeof(int));
   int n_ptrs = 200;
   subhs->ptrs = (subh_ptr **) malloc(sizeof(subh_ptr *)*n_ptrs);
@@ -458,7 +464,7 @@ subh_ptr ** get_subh(subh_array *subhs, enum SUBH_TYPE type) {
 
   int current = 0;
   i = 0;
-  for (i = 0; i < subhs->total; i++) {
+  for (i = 0; i < subhs->count; i++) {
     if (subhs->ptrs[i]->type == type) {
       ptrs[current] = subhs->ptrs[i];
       current += 1;
@@ -507,8 +513,8 @@ subh_ptr * initialize_subh_ptr(int ptr_num, byte *page, int page_num) {
 
 void add_to_subh_array(subh_array *subhs, subh_ptr *ptr) {
   if (ptr->type == UNKNOWN) return;
-  subhs->ptrs[subhs->total] = ptr;
-  subhs->total++;
+  subhs->ptrs[subhs->count] = ptr;
+  subhs->count++;
   subhs->type_counts[ptr->type]++;
 }
 
@@ -734,14 +740,15 @@ void write_page(FILE *out_file, byte *page, int page_num, meta_info *meta_info_p
 }
 
 void write_char(FILE *out_file, byte *str, int length) {
-  byte *byte_str = (byte *) malloc(sizeof(byte)*length);
+  byte *byte_str = (byte *) malloc(sizeof(byte)*length+1);
   memcpy(byte_str, str, length);
+  byte_str[length] = '\0';
   char *char_str = byte_str;
-  trim(char_str);
+  char_str = trim(char_str);
 
   fprintf(out_file,"\"%s\"",char_str);
   
-  free(byte_str);
+  free(char_str);
 }
 
 void write_num(FILE *out_file, byte *num, int length) {
