@@ -723,6 +723,9 @@ void write_page(FILE *out_file, byte *page, int page_num, meta_info *meta_info_p
     memcpy(&row_count, page+PAGE_DATA_ROW_OFFSET, sizeof(int));
   }
 
+  /* if there are too many rows in the mix row count it's not right */
+  if (row_count > meta_info_ptr->r->count) row_count = meta_info_ptr->r->count;
+
   for (r = 0; r < row_count; r++) {
     for (c = 0; c < meta_info_ptr->c->count; c++) {
       col_offset = meta_info_ptr->c->cols[c]-> offset;
