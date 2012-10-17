@@ -201,6 +201,7 @@ double get_timestamp(byte *header, size_t align);
 page_info * get_page_info(byte *header, size_t align);
 char * get_sas_release(byte *header, size_t align);
 char * get_sas_host(byte *header, size_t align);
+void check_sas_host(byte *host);
 void write_header_info(FILE *info_file, header_info *header_info_ptr);
 
 /* subheader functions */
@@ -265,6 +266,9 @@ void to_csv(FILE *data_file, FILE *out_file, FILE *info_file) {
   header_info *header_info_ptr = parse_header(header);
   write_header_info(info_file, header_info_ptr);
   fflush(info_file);
+
+  /* make sure host is windows */
+  check_sas_host(header_info_ptr->sas_host);
 
   meta_info *meta_info_ptr = get_meta_info(data_file, header_info_ptr->page_info_ptr);
   write_meta_info(info_file, meta_info_ptr);
@@ -374,6 +378,13 @@ char * get_sas_host(byte *header, size_t align) {
   byte *sas_host = (byte*) malloc(sizeof(byte)*SAS_HOST_LENGTH);
   memcpy(sas_host, header+SAS_HOST_OFFSET+align, SAS_HOST_LENGTH);
   return trim(sas_host);
+}
+
+void check_sas_host(byte *host) {
+  if (memcmp(host,"Linux",5) == 0 || memcmp(host,"SunOS",5) == 0) {
+    fprintf(stderr,"SAS files from host type '%s' are not currently supported\n", host);
+    exit(3);
+  }
 }
 
 void write_header_info(FILE *info_file, header_info *header_info_ptr) {  
