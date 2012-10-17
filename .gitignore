@@ -1,3 +1,4 @@
 *.csv
 *.info
 .DS_Store
+bin/*

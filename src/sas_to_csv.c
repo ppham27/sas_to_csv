@@ -267,7 +267,7 @@ void to_csv(FILE *data_file, FILE *out_file, FILE *info_file) {
   write_header_info(info_file, header_info_ptr);
   fflush(info_file);
 
-  /* make sure host is windows */
+  /* make sure host is windows, can't read files from unix hosts */
   check_sas_host(header_info_ptr->sas_host);
 
   meta_info *meta_info_ptr = get_meta_info(data_file, header_info_ptr->page_info_ptr);
