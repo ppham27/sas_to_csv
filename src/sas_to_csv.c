@@ -251,12 +251,10 @@ int main(int argc, char *argv[]) {
   FILE *info_file = fopen(strcat(info_file_name,".info"), "wb");
   FILE *out_file = fopen(strcat(out_file_name,".csv"), "wb");
   setvbuf(out_file, NULL, _IOFBF, 1024*512);
-
+  
   to_csv(data_file, out_file, info_file);
 
   fclose(data_file);
-  fflush(info_file);
-  fclose(info_file);
   fflush(out_file);
   fclose(out_file);
   return 0;
@@ -266,11 +264,15 @@ void to_csv(FILE *data_file, FILE *out_file, FILE *info_file) {
   byte *header = get_header(data_file);
   header_info *header_info_ptr = parse_header(header);
   write_header_info(info_file, header_info_ptr);
-    
+  fflush(info_file);
+
   meta_info *meta_info_ptr = get_meta_info(data_file, header_info_ptr->page_info_ptr);
   write_meta_info(info_file, meta_info_ptr);
-
+  fflush(info_file);
+  fclose(info_file);
+  
   write_header(out_file, meta_info_ptr->c);
+  fflush(out_file);
 
   int i;
   byte *page = (byte *) malloc(sizeof(byte)*header_info_ptr->page_info_ptr->size);
@@ -436,7 +438,7 @@ subh_array * initialize_subh_array() {
   subh_array *subhs = (subh_array *) malloc(sizeof(subh_array));
   subhs->count = 0;
   subhs->type_counts = (int *) calloc(SUBH_TYPES_NUM, sizeof(int));
-  int n_ptrs = 200;
+  int n_ptrs = 400;
   subhs->ptrs = (subh_ptr **) malloc(sizeof(subh_ptr *)*n_ptrs);
   int i;
   for (i = 0; i < n_ptrs; i++) subhs->ptrs[i] = (subh_ptr *) malloc(sizeof(subh_ptr));
@@ -722,13 +724,13 @@ void write_page(FILE *out_file, byte *page, int page_num, meta_info *meta_info_p
     data_offset = PAGE_DATA_OFFSET;
     memcpy(&row_count, page+PAGE_DATA_ROW_OFFSET, sizeof(int));
   }
-
+  
   /* if there are too many rows in the mix row count it's not right */
   if (row_count > meta_info_ptr->r->count) row_count = meta_info_ptr->r->count;
 
   for (r = 0; r < row_count; r++) {
     for (c = 0; c < meta_info_ptr->c->count; c++) {
-      col_offset = meta_info_ptr->c->cols[c]-> offset;
+      col_offset = meta_info_ptr->c->cols[c]->offset;
       col_length = meta_info_ptr->c->cols[c]->length;
       if (meta_info_ptr->c->cols[c]->type == NUM) {
         write_num(out_file, page + data_offset + col_offset, col_length);
@@ -755,10 +757,14 @@ void write_char(FILE *out_file, byte *str, int length) {
 }
 
 void write_num(FILE *out_file, byte *num, int length) {
-  double new_num;
-  memset(&new_num,0,sizeof(double)-length);
-  memcpy(&new_num + (sizeof(double) - length) , num, length);
-  fprintf(out_file,"%lf",new_num);         
+  byte *new_num;
+  double new_double;
+  memset(&new_double, 0, sizeof(double));
+  new_num = (byte *) calloc(sizeof(double), sizeof(byte));
+  memcpy(new_num+(sizeof(double)-length), num, length);
+  memcpy(&new_double, new_num, sizeof(double));  
+  fprintf(out_file,"%lf",new_double);
+  free(new_num);
 }
 
 /* trim leading and trailing whitespace in place*/
