@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <byteswap.h>
 
 typedef unsigned char byte;
 
@@ -26,6 +27,9 @@ const byte ALIGN_64[] = {0x33,0x33};
 const size_t ALIGN_64_OFFSET = 4;
 const byte ALIGN_32[] = {0x32,0x22};
 const size_t ALIGN_32_OFFSET = 0;
+
+const size_t ENDIAN_OFFSET = 37;
+const size_t ENDIAN_FLIP = 1;
 
 const size_t SAS_LABEL_OFFSET = 84;
 const size_t SAS_LABEL_LENGTH = 8;
@@ -128,12 +132,14 @@ enum COL_TYPE {
 /* header structures */
 typedef struct {
   size_t size;
-  int count;
+  long count;
 } page_info;
 
 typedef struct {
   byte *magic_number;
   size_t align;
+  byte endian;
+  byte bswap_flag;
   char *sas_label;
   char *dataset_name;
   char *file_type;
@@ -194,6 +200,8 @@ header_info * parse_header(byte *header);
 byte * get_magic_number(byte *header);
 void check_magic_number(byte *magic_number);
 size_t get_alignment(byte *header);
+byte get_endian(byte *header);
+byte get_bswap_flag(byte *header);
 char * get_sas_label(byte *header);
 char * get_dataset_name(byte *header);
 char * get_file_type(byte *header);
@@ -201,7 +209,7 @@ double get_timestamp(byte *header, size_t align);
 page_info * get_page_info(byte *header, size_t align);
 char * get_sas_release(byte *header, size_t align);
 char * get_sas_host(byte *header, size_t align);
-void check_sas_host(byte *host);
+void check_sas_host(byte *host, size_t align);
 void write_header_info(FILE *info_file, header_info *header_info_ptr);
 
 /* subheader functions */
@@ -237,6 +245,8 @@ void write_num(FILE *out_file, byte *num, int length);
 /* utility functions */
 char * trim(char *str);
 
+/* Endian flip flag - global variable is a bit of a hack */
+int bswap_flag = 0;
 
 int main(int argc, char *argv[]) {  
   if (argc < 2) {
@@ -267,8 +277,8 @@ void to_csv(FILE *data_file, FILE *out_file, FILE *info_file) {
   write_header_info(info_file, header_info_ptr);
   fflush(info_file);
 
-  /* make sure host is windows, can't read files from unix hosts */
-  check_sas_host(header_info_ptr->sas_host);
+  /* make sure host is compatible */
+  check_sas_host(header_info_ptr->sas_host, header_info_ptr->align);
 
   meta_info *meta_info_ptr = get_meta_info(data_file, header_info_ptr->page_info_ptr);
   write_meta_info(info_file, meta_info_ptr);
@@ -298,6 +308,9 @@ header_info * parse_header(byte *header) {
   header_info *header_info_ptr = (header_info *) malloc(sizeof(header_info));
   header_info_ptr->magic_number = get_magic_number(header);
   header_info_ptr->align = get_alignment(header);
+  header_info_ptr->endian = get_endian(header);
+  header_info_ptr->bswap_flag = get_bswap_flag(header);
+  bswap_flag = header_info_ptr->bswap_flag;
   header_info_ptr->sas_label = get_sas_label(header);
   header_info_ptr->dataset_name = get_dataset_name(header);
   header_info_ptr->file_type = get_file_type(header);
@@ -331,6 +344,17 @@ size_t get_alignment(byte *header) {
   exit(2);  
 }
 
+byte get_endian(byte *header) {
+  return *(header+ENDIAN_OFFSET);
+}
+
+byte get_bswap_flag(byte *header) {
+  short int number = 0x1;
+  char *numPtr = (char*)&number;
+  byte bswap_flag = *(header+ENDIAN_OFFSET) == numPtr[0] ? 0 : 1;
+  return bswap_flag;
+}
+
 char * get_sas_label(byte *header) {
   byte *sas_label = (byte *) malloc(sizeof(byte)*SAS_LABEL_LENGTH);
   memcpy(sas_label, header+SAS_LABEL_OFFSET, SAS_LABEL_LENGTH);
@@ -352,6 +376,7 @@ char * get_file_type(byte *header) {
 double get_timestamp(byte *header, size_t align) {
   double timestamp;
   memcpy(&timestamp, header+TIMESTAMP_OFFSET+align, sizeof(double));
+  if (bswap_flag) timestamp = bswap_64(timestamp);
   return timestamp;
 }
 
@@ -359,10 +384,14 @@ page_info * get_page_info(byte *header, size_t align) {
   page_info *page_info_ptr = (page_info *) malloc(sizeof(page_info));
   int page_size;
   memcpy(&page_size, header+PAGE_SIZE_OFFSET+align, sizeof(int));
+  if (bswap_flag) page_size = bswap_32(page_size);
   if (page_size < 0) fprintf(stderr,"error page size is negative\n");
   page_info_ptr->size = page_size;
 
-  memcpy(&page_info_ptr->count, header+PAGE_COUNT_OFFSET+align, sizeof(int));
+  if (align == ALIGN_32_OFFSET) memcpy(&page_info_ptr->count, header+PAGE_COUNT_OFFSET+align, sizeof(int));
+  if (align == ALIGN_64_OFFSET) memcpy(&page_info_ptr->count, header+PAGE_COUNT_OFFSET+align, sizeof(long));
+  if (bswap_flag && align == ALIGN_32_OFFSET) page_info_ptr->count = bswap_32(page_info_ptr->count);
+  if (bswap_flag && align == ALIGN_64_OFFSET) page_info_ptr->count = bswap_64(page_info_ptr->count);
   if (page_info_ptr->count < 1) fprintf(stderr,"error page count is not positive\n");
     
   return page_info_ptr;
@@ -370,25 +399,30 @@ page_info * get_page_info(byte *header, size_t align) {
 
 char * get_sas_release(byte *header, size_t align) {
   byte *sas_release = (byte*) malloc(sizeof(byte)*SAS_RELEASE_LENGTH);
-  memcpy(sas_release, header+SAS_RELEASE_OFFSET+align, SAS_RELEASE_LENGTH);
+  memcpy(sas_release, header+SAS_RELEASE_OFFSET+align*2, SAS_RELEASE_LENGTH);
   return trim(sas_release);
 }
 
 char * get_sas_host(byte *header, size_t align) {
   byte *sas_host = (byte*) malloc(sizeof(byte)*SAS_HOST_LENGTH);
-  memcpy(sas_host, header+SAS_HOST_OFFSET+align, SAS_HOST_LENGTH);
+  memcpy(sas_host, header+SAS_HOST_OFFSET+align*2, SAS_HOST_LENGTH);
   return trim(sas_host);
 }
 
-void check_sas_host(byte *host) {
-  if (memcmp(host,"Linux",5) == 0 || memcmp(host,"SunOS",5) == 0) {
-    fprintf(stderr,"SAS files from host type '%s' are not currently supported\n", host);
+void check_sas_host(byte *host, size_t align) {
+  if (bswap_flag) {
+    fprintf(stderr,"SAS files with different endian format (byte ordering) are not currently supported\n");
+    exit(3);
+  }
+  if (align == ALIGN_64_OFFSET) {
+    fprintf(stderr,"SAS files using 64-bit data types are not currently supported\n");
     exit(3);
   }
 }
 
 void write_header_info(FILE *info_file, header_info *header_info_ptr) {  
   fprintf(info_file, "Alignment: %zd\n",header_info_ptr->align);  
+  fprintf(info_file, "Endian: %zd, Swap: %zd\n",header_info_ptr->endian, header_info_ptr->bswap_flag);
   fprintf(info_file, "SAS label: %s\n",header_info_ptr->sas_label); /* expect SAS FILE */  
   fprintf(info_file, "Dataset name: %s\n",header_info_ptr->dataset_name);
   fprintf(info_file, "File type: %s\n",header_info_ptr->file_type);
